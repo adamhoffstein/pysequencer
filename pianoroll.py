@@ -1,71 +1,42 @@
 import asyncio
-import dataclasses
-from enum import Enum
 
 from rich.segment import Segment
 from rich.style import Style
 from textual import events
 from textual.app import App, ComposeResult
 from textual.containers import Container
+from textual.containers import Grid
 from textual.geometry import Offset, Region, Size
 from textual.message import Message
 from textual.reactive import var
+from textual.screen import Screen
+from textual.scroll_view import ScrollView
 from textual.strip import Strip
-from textual.widget import Widget
-from textual.widgets import Footer, Log
+from textual.widgets import Button, Footer, Label, Header
+
+from schemas import PianoKey
+from settings import CURSOR_ROW, ROW_LENGTH, PIANO_KEYS, NOTE_COUNT, TICK
 
 
-class Note(Enum):
-    A = 1
-    B = 2
-    C = 3
-    D = 4
-    E = 5
-    F = 6
-    G = 7
+class QuitScreen(Screen):
+    """Screen with a dialog to quit."""
+
+    def compose(self) -> ComposeResult:
+        yield Grid(
+            Label("Are you sure you want to quit?", id="question"),
+            Button("Quit", variant="error", id="quit"),
+            Button("Cancel", variant="primary", id="cancel"),
+            id="dialog",
+        )
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "quit":
+            self.app.exit()
+        else:
+            self.app.pop_screen()
 
 
-@dataclasses.dataclass
-class PianoKey:
-    note: Note
-    octave: int
-    sharp: bool
-
-
-OCTAVES = 2
-
-KEY_SEQUENCE = []
-
-for octave in range(OCTAVES, 0, -1):
-    KEY_SEQUENCE.extend(
-        [
-            (Note.C, octave, False),
-            (Note.C, octave, True),
-            (Note.D, octave, False),
-            (Note.D, octave, True),
-            (Note.E, octave, False),
-            (Note.F, octave, False),
-            (Note.F, octave, True),
-            (Note.G, octave, False),
-            (Note.G, octave, True),
-            (Note.A, octave, False),
-            (Note.A, octave, True),
-            (Note.B, octave, False),
-        ]
-    )
-
-PIANO_KEYS = [PianoKey(*key) for key in KEY_SEQUENCE]
-
-ROW_LENGTH = 1
-
-NOTE_COUNT = 16
-
-CURSOR_ROW = 12 * OCTAVES + 1
-
-TICK = 0.1
-
-
-class PianoRoll(Widget):
+class PianoRoll(ScrollView):
     class Selected(Message):
         def __init__(
             self, clicked_cell: Offset, current_state: dict[Offset, 1]
@@ -133,7 +104,7 @@ class PianoRoll(Widget):
     def __init__(self) -> None:
         super().__init__()
         self.board_size = len(PIANO_KEYS)
-        self.virtual_size = Size(8, 1)
+        self.virtual_size = Size(len(PIANO_KEYS) * 8, len(PIANO_KEYS) * 1)
 
     def on_mouse_move(self, event: events.MouseMove) -> None:
         mouse_position = event.offset + self.scroll_offset
@@ -206,6 +177,9 @@ class PianoRoll(Widget):
     def render_line(self, y: int) -> Strip:
         """Render a line of the widget. y is relative to the top of the widget."""
 
+        scroll_x, scroll_y = self.scroll_offset  # The current scroll position
+        y += scroll_y  # The line at the top of the widget is now `scroll_y`, not zero!
+
         row_index = y // ROW_LENGTH
 
         if row_index > len(PIANO_KEYS) + 1:
@@ -247,12 +221,15 @@ class PianoRoll(Widget):
         ]
 
         strip = Strip(segments)
+        # Crop the strip so that is covers the visible area
+        strip = strip.crop(scroll_x, scroll_x + self.size.width)
         return strip
 
 
 class PianoRollApp(App):
+    CSS_PATH = "styles.tcss"
     BINDINGS = [
-        ("q", "quit", "Quit"),
+        ("q", "request_quit", "Quit"),
         ("space", "play", "Play / Stop"),
         ("c", "clear", "Clear"),
     ]
@@ -263,10 +240,12 @@ class PianoRollApp(App):
 
     def compose(self) -> ComposeResult:
         with Container(id="main_container"):
+            yield Header(name="PySequencer")
             yield PianoRoll()
             yield Footer()
-        with Container(id="debug_container"):
-            yield Log()
+
+    def action_request_quit(self) -> None:
+        self.push_screen(QuitScreen())
 
     def toggle_play(self) -> None:
         self.is_playing = not self.is_playing
@@ -285,10 +264,10 @@ class PianoRollApp(App):
             await asyncio.sleep(TICK)
 
     def on_piano_roll_selected(self, message: PianoRoll.Selected) -> None:
-        self.query_one(Log).write_line(message.coords)
+        self.log(message.coords)
 
     def on_piano_roll_played(self, message: PianoRoll.Played) -> None:
-        self.query_one(Log).write_line(message.coords)
+        self.log(message.coords)
 
 
 if __name__ == "__main__":
