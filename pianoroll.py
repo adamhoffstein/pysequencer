@@ -32,21 +32,27 @@ class PianoKey:
     sharp: bool
 
 
-KEY_SEQUENCE = [
-    (Note.C, 1, False),
-    (Note.C, 1, True),
-    (Note.D, 1, False),
-    (Note.D, 1, True),
-    (Note.E, 1, False),
-    (Note.F, 1, False),
-    (Note.F, 1, True),
-    (Note.G, 1, False),
-    (Note.G, 1, True),
-    (Note.A, 1, False),
-    (Note.A, 1, True),
-    (Note.B, 1, False),
-]
+OCTAVES = 2
 
+KEY_SEQUENCE = []
+
+for octave in range(OCTAVES, 0, -1):
+    KEY_SEQUENCE.extend(
+        [
+            (Note.C, octave, False),
+            (Note.C, octave, True),
+            (Note.D, octave, False),
+            (Note.D, octave, True),
+            (Note.E, octave, False),
+            (Note.F, octave, False),
+            (Note.F, octave, True),
+            (Note.G, octave, False),
+            (Note.G, octave, True),
+            (Note.A, octave, False),
+            (Note.A, octave, True),
+            (Note.B, octave, False),
+        ]
+    )
 
 PIANO_KEYS = [PianoKey(*key) for key in KEY_SEQUENCE]
 
@@ -54,11 +60,13 @@ ROW_LENGTH = 1
 
 NOTE_COUNT = 16
 
+CURSOR_ROW = 12 * OCTAVES + 1
+
+TICK = 0.1
+
 
 class PianoRoll(Widget):
     class Selected(Message):
-        """Color selected message."""
-
         def __init__(
             self, clicked_cell: Offset, current_state: dict[Offset, 1]
         ) -> None:
@@ -69,6 +77,15 @@ class PianoRoll(Widget):
         @property
         def coords(self) -> str:
             return f"{self.clicked_cell.x}, {self.clicked_cell.y}: {self.current_state}"
+
+    class Played(Message):
+        def __init__(self, current_cell: Offset) -> None:
+            self.current_cell = current_cell
+            super().__init__()
+
+        @property
+        def coords(self) -> str:
+            return f"{self.current_cell.x}, {self.current_cell.y}"
 
     COMPONENT_CLASSES = {
         "piano-roll--white-key",
@@ -111,7 +128,7 @@ class PianoRoll(Widget):
     cursor_cell = var(Offset(0, 0))
     last_clicked = var(Offset(0, 0))
     drawn_keys_state = var({})
-    play_cursor = var(Offset(1, 13))
+    play_cursor = var(Offset(1, CURSOR_ROW))
 
     def __init__(self) -> None:
         super().__init__()
@@ -173,16 +190,18 @@ class PianoRoll(Widget):
         self.refresh_cell(previous_cell, clicked_cell)
 
     def play(self) -> None:
+        self.post_message(self.Played(self.play_cursor))
         if self.play_cursor.x < 16:
-            previous_cell = Offset(self.play_cursor.x - 1, 13)
-            self.play_cursor = Offset(self.play_cursor.x + 1, 13)
+            previous_cell = Offset(self.play_cursor.x - 1, CURSOR_ROW)
+            self.play_cursor = Offset(self.play_cursor.x + 1, CURSOR_ROW)
         else:
-            previous_cell = Offset(16, 13)
-            self.play_cursor = Offset(1, 0)
+            previous_cell = Offset(16, CURSOR_ROW)
+            self.play_cursor = Offset(1, CURSOR_ROW)
         self.refresh_cell(previous_cell, self.play_cursor)
-        self.post_message(
-            self.Selected(self.last_clicked, self.drawn_keys_state)
-        )
+
+    def clear(self) -> None:
+        self.drawn_keys_state = {}
+        self.refresh()
 
     def render_line(self, y: int) -> Strip:
         """Render a line of the widget. y is relative to the top of the widget."""
@@ -226,12 +245,21 @@ class PianoRoll(Widget):
             Segment(" " * 8, get_style(column, row_index))
             for column in range(NOTE_COUNT + 1)
         ]
+
         strip = Strip(segments)
         return strip
 
 
 class PianoRollApp(App):
-    BINDINGS = [("q", "quit", "Quit"), ("p", "play", "Play")]
+    BINDINGS = [
+        ("q", "quit", "Quit"),
+        ("space", "play", "Play / Stop"),
+        ("c", "clear", "Clear"),
+    ]
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.is_playing = False
 
     def compose(self) -> ComposeResult:
         with Container(id="main_container"):
@@ -240,16 +268,26 @@ class PianoRollApp(App):
         with Container(id="debug_container"):
             yield Log()
 
-    async def action_play(self) -> None:
-        asyncio.create_task(self.play_sequence())
+    def toggle_play(self) -> None:
+        self.is_playing = not self.is_playing
 
-    async def play_sequence(self):
-        self.query_one(Log).write_line("clicked play")
-        while True:
+    async def action_play(self) -> None:
+        self.toggle_play()
+        if self.is_playing:
+            asyncio.create_task(self.play_sequence())
+
+    def action_clear(self) -> None:
+        self.query_one(PianoRoll).clear()
+
+    async def play_sequence(self) -> None:
+        while self.is_playing:
             self.query_one(PianoRoll).play()
-            await asyncio.sleep(0.1)
+            await asyncio.sleep(TICK)
 
     def on_piano_roll_selected(self, message: PianoRoll.Selected) -> None:
+        self.query_one(Log).write_line(message.coords)
+
+    def on_piano_roll_played(self, message: PianoRoll.Played) -> None:
         self.query_one(Log).write_line(message.coords)
 
 
