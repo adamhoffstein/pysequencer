@@ -1,0 +1,15 @@
+[tool.poetry]
+name = "sequencer"
+version = "0.1.0"
+description = ""
+authors = ["adam <adam.hoffstein@gmail.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.11"
+textual = "^0.40.0"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
